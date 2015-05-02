@@ -18,14 +18,30 @@
         // Utility variable indicating whether some fatal has occurred.
         abort = false,
 
-        // Important state variables.
-        animationActive = false,
-        currentRotation = 0.0,
-        currentInterval,
+        // The raw meshes from which we will derive our objects.
+        mesh = Shapes.icosahedron(),
+ 
+        // Important state variables.  Yep, they are growing!
         modelViewMatrix,
+        xRotationMatrix,
+        yRotationMatrix,
         projectionMatrix,
         vertexPosition,
-        vertexColor,
+        vertexDiffuseColor,
+        vertexSpecularColor,
+        shininess,
+        rotationAroundX = 0.0,
+        rotationAroundY = 0.0,
+
+        // For emphasis, we separate the variables that involve lighting.
+        normalVector,
+        lightPosition,
+        lightDiffuse,
+        lightSpecular,
+
+        // These variables pertain to texture mapping.
+        texture,
+        textureCoordinate,
 
         // An individual "draw object" function.
         drawObject,
@@ -33,9 +49,11 @@
         // The big "draw scene" function.
         drawScene,
 
-        // State and function for performing animation.
-        previousTimestamp,
-        advanceScene,
+        // Transient state variables for event handling.
+        xDragStart,
+        yDragStart,
+        xRotationStart,
+        yRotationStart,
 
         // Reusable loop variables.
         i,
@@ -162,125 +180,49 @@
     gl.clearColor(0.0, 0.0, 0.0, 0.0);
     gl.viewport(0, 0, canvas.width, canvas.height);
 
-    // Build the objects to display.  Note how each object may come with a
-    // rotation axis now.
+    // Set up the texture object.
+    texture = gl.createTexture();
+    var textureImage = new Image();
+    var textureIsReady = false;
+    textureImage.onload = function () {
+        gl.bindTexture(gl.TEXTURE_2D, texture);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, textureImage);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_NEAREST);
+        gl.generateMipmap(gl.TEXTURE_2D);
+        gl.bindTexture(gl.TEXTURE_2D, null);
+        textureIsReady = true;
+    };
+    textureImage.src = "mc-grass.jpg";
+
+    // Build the objects to display.
     objectsToDraw = [
-        // We move our original triangles a bit to accommodate a new addition
-        // to the scene (yes, a translation will also do the trick, if it
-        // where implemented in this program).
         {
-            vertices: [].concat(
-                [ -2.0, 0.0, 0.0 ],
-                [ -1.5, 0.0, -0.75 ],
-                [ -2.0, 0.5, 0.0 ]
-            ),
-            colors: [].concat(
-                [ 1.0, 0.0, 0.0 ],
-                [ 0.0, 1.0, 0.0 ],
-                [ 0.0, 0.0, 1.0 ]
-            ),
-            mode: gl.TRIANGLES
-        },
+            vertices: Shapes.toRawTriangleArray(mesh),
 
-        {
-            color: { r: 0.0, g: 1.0, b: 0 },
-            vertices: [].concat(
-                [ -1.75, 0.0, -0.5 ],
-                [ -1.25, 0.0, -0.5 ],
-                [ -1.75, 0.5, -0.5 ]
-            ),
-            mode: gl.TRIANGLES
-        },
-
-        {
-            color: { r: 0.0, g: 0.0, b: 1.0 },
-            vertices: [].concat(
-                [ -2.25, 0.0, 0.5 ],
-                [ -1.75, 0.0, 0.5 ],
-                [ -2.25, 0.5, 0.5 ]
-            ),
-            mode: gl.TRIANGLES
-        },
-
-        {
-            color: { r: 0.0, g: 0.0, b: 1.0 },
-            vertices: [].concat(
-                [ -1.0, -1.0, 0.75 ],
-                [ -1.0, -0.1, -1.0 ],
-                [ -0.1, -0.1, -1.0 ],
-                [ -0.1, -1.0, 0.75 ]
-            ),
-            mode: gl.LINE_LOOP,
-            axis: { x: 1.0, y: 0.0, z: 1.0 }
-        },
-
-        {
-            color: { r: 0.0, g: 0.5, b: 0.0 },
-            vertices: Shapes.toRawLineArray(Shapes.icosahedron()),
-            mode: gl.LINES,
-            axis: { x: 0.0, y: 1.0, z: 1.0 }
-        },
-
-        // Something that would have been clipped before.
-        {
-            vertices: [].concat(
-                [ 3.0, 1.5, 0.0 ],
-                [ 2.0, -1.5, 0.0 ],
-                [ 4.0, -1.5, 0.0 ]
-            ),
-            colors: [].concat(
-                [ 1.0, 0.5, 0.0 ],
-                [ 0.0, 0.0, 0.5 ],
-                [ 0.5, 0.75, 0.5 ]
-            ),
-            mode: gl.TRIANGLES,
-            axis: { x: -0.5, y: 1.0, z: 0.0 }
-        },
-
-        // Show off the new shape.
-        {
-            vertices: Shapes.toRawTriangleArray(Shapes.cube()),
             // 12 triangles in all.
-            colors: [].concat(
-                [ 1.0, 0.0, 0.0 ],
-                [ 1.0, 0.0, 0.0 ],
-                [ 1.0, 0.0, 0.0 ],
-                [ 1.0, 0.0, 0.0 ],
-                [ 1.0, 0.0, 0.0 ],
-                [ 1.0, 0.0, 0.0 ],
-                [ 0.0, 1.0, 0.0 ],
-                [ 0.0, 1.0, 0.0 ],
-                [ 0.0, 1.0, 0.0 ],
-                [ 0.0, 1.0, 0.0 ],
-                [ 0.0, 1.0, 0.0 ],
-                [ 0.0, 1.0, 0.0 ],
-                [ 0.0, 0.0, 1.0 ],
-                [ 0.0, 0.0, 1.0 ],
-                [ 0.0, 0.0, 1.0 ],
-                [ 0.0, 0.0, 1.0 ],
-                [ 0.0, 0.0, 1.0 ],
-                [ 0.0, 0.0, 1.0 ],
-                [ 1.0, 1.0, 0.0 ],
-                [ 1.0, 1.0, 0.0 ],
-                [ 1.0, 1.0, 0.0 ],
-                [ 1.0, 1.0, 0.0 ],
-                [ 1.0, 1.0, 0.0 ],
-                [ 1.0, 1.0, 0.0 ],
-                [ 1.0, 0.0, 1.0 ],
-                [ 1.0, 0.0, 1.0 ],
-                [ 1.0, 0.0, 1.0 ],
-                [ 1.0, 0.0, 1.0 ],
-                [ 1.0, 0.0, 1.0 ],
-                [ 1.0, 0.0, 1.0 ],
-                [ 0.0, 1.0, 1.0 ],
-                [ 0.0, 1.0, 1.0 ],
-                [ 0.0, 1.0, 1.0 ],
-                [ 0.0, 1.0, 1.0 ],
-                [ 0.0, 1.0, 1.0 ],
-                [ 0.0, 1.0, 1.0 ]
-            ),
-            mode: gl.TRIANGLES,
-            axis: { x: 1.0, y: 1.0, z: 1.0 }
+            color: { r: 1.0, g: 0.0, b: 0.0 },
+
+            // We make the specular reflection be white.
+            specularColor: { r: 1.0, g: 1.0, b: 1.0 },
+            shininess: 16,
+
+            // Like colors, one normal per vertex.  This can be simplified
+            // with helper functions, of course.
+            normals: Shapes.toNormalArray(mesh),
+
+            // One more array to associate with our vertices---texture coordinates!
+            // Here we generate them raw...some design thought may be needed in order
+            // to create/manage them in a more convenient way.
+            textureCoordinates: (function () {
+                var result = [];
+                for (var i = 0; i < 20; i += 1) {
+                    result.push(0.0, 0.0, 1.0, 0.0, 0.0, 1.0);
+                }
+                return result;
+            })(),
+
+            mode: gl.TRIANGLES
         }
     ];
 
@@ -304,6 +246,31 @@
         }
         objectsToDraw[i].colorBuffer = GLSLUtilities.initVertexBuffer(gl,
                 objectsToDraw[i].colors);
+
+        // Same trick with specular colors.
+        if (!objectsToDraw[i].specularColors) {
+            // Future refactor: helper function to convert a single value or
+            // array into an array of copies of itself.
+            objectsToDraw[i].specularColors = [];
+            for (j = 0, maxj = objectsToDraw[i].vertices.length / 3;
+                    j < maxj; j += 1) {
+                objectsToDraw[i].specularColors = objectsToDraw[i].specularColors.concat(
+                    objectsToDraw[i].specularColor.r,
+                    objectsToDraw[i].specularColor.g,
+                    objectsToDraw[i].specularColor.b
+                );
+            }
+        }
+        objectsToDraw[i].specularBuffer = GLSLUtilities.initVertexBuffer(gl,
+                objectsToDraw[i].specularColors);
+
+        // One more buffer: normals.
+        objectsToDraw[i].normalBuffer = GLSLUtilities.initVertexBuffer(gl,
+                objectsToDraw[i].normals);
+ 
+        // And one more still: texture coordinates.
+        objectsToDraw[i].textureCoordinateBuffer = GLSLUtilities.initVertexBuffer(gl,
+                objectsToDraw[i].textureCoordinates);
     }
 
     // Initialize the shaders.
@@ -338,14 +305,28 @@
     // Hold on to the important variables within the shaders.
     vertexPosition = gl.getAttribLocation(shaderProgram, "vertexPosition");
     gl.enableVertexAttribArray(vertexPosition);
-    vertexColor = gl.getAttribLocation(shaderProgram, "vertexColor");
-    gl.enableVertexAttribArray(vertexColor);
+    vertexDiffuseColor = gl.getAttribLocation(shaderProgram, "vertexDiffuseColor");
+    gl.enableVertexAttribArray(vertexDiffuseColor);
+    vertexSpecularColor = gl.getAttribLocation(shaderProgram, "vertexSpecularColor");
+    gl.enableVertexAttribArray(vertexSpecularColor);
+    normalVector = gl.getAttribLocation(shaderProgram, "normalVector");
+    gl.enableVertexAttribArray(normalVector);
+    textureCoordinate = gl.getAttribLocation(shaderProgram, "textureCoordinate");
+    gl.enableVertexAttribArray(textureCoordinate);
 
     // Finally, we come to the typical setup for transformation matrices:
     // model-view and projection, managed separately.
     modelViewMatrix = gl.getUniformLocation(shaderProgram, "modelViewMatrix");
+    xRotationMatrix = gl.getUniformLocation(shaderProgram, "xRotationMatrix");
+    yRotationMatrix = gl.getUniformLocation(shaderProgram, "yRotationMatrix");
     projectionMatrix = gl.getUniformLocation(shaderProgram, "projectionMatrix");
 
+    // Note the additional variables.
+    lightPosition = gl.getUniformLocation(shaderProgram, "lightPosition");
+    lightDiffuse = gl.getUniformLocation(shaderProgram, "lightDiffuse");
+    lightSpecular = gl.getUniformLocation(shaderProgram, "lightSpecular");
+    shininess = gl.getUniformLocation(shaderProgram, "shininess");
+ 
     /*
      * Displays an individual object, including a transformation that now varies
      * for each object drawn.
@@ -353,17 +334,34 @@
     drawObject = function (object) {
         // Set the varying colors.
         gl.bindBuffer(gl.ARRAY_BUFFER, object.colorBuffer);
-        gl.vertexAttribPointer(vertexColor, 3, gl.FLOAT, false, 0, 0);
+        gl.vertexAttribPointer(vertexDiffuseColor, 3, gl.FLOAT, false, 0, 0);
+
+        gl.bindBuffer(gl.ARRAY_BUFFER, object.specularBuffer);
+        gl.vertexAttribPointer(vertexSpecularColor, 3, gl.FLOAT, false, 0, 0);
+
+        // Set the shininess.
+        gl.uniform1f(shininess, object.shininess);
 
         // Set up the model-view matrix, if an axis is included.  If not, we
         // specify the identity matrix.
-        gl.uniformMatrix4fv(modelViewMatrix, gl.FALSE, new Float32Array(object.axis ?
-                getRotationMatrix(currentRotation, object.axis.x, object.axis.y, object.axis.z) :
+        gl.uniformMatrix4fv(modelViewMatrix, gl.FALSE, new Float32Array(object.rotation ?
+                getRotationMatrix(object.rotation.theta,
+                        object.rotation.x, object.rotation.y, object.rotation.z) :
                 [1, 0, 0, 0, // N.B. In a full-fledged matrix library, the identity
                  0, 1, 0, 0, //      matrix should be available as a function.
                  0, 0, 1, 0,
                  0, 0, 0, 1]
             ));
+
+        // Set the varying normal vectors.
+        gl.bindBuffer(gl.ARRAY_BUFFER, object.normalBuffer);
+        gl.vertexAttribPointer(normalVector, 3, gl.FLOAT, false, 0, 0);
+
+        // Set the texture varialbes.
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, texture);
+        gl.bindBuffer(gl.ARRAY_BUFFER, object.textureCoordinateBuffer);
+        gl.vertexAttribPointer(textureCoordinate, 2, gl.FLOAT, false, 0, 0);
 
         // Set the varying vertex coordinates.
         gl.bindBuffer(gl.ARRAY_BUFFER, object.buffer);
@@ -378,6 +376,14 @@
         // Clear the display.
         gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
+        // Set the overall rotation.
+        gl.uniformMatrix4fv(xRotationMatrix, gl.FALSE, new Float32Array(
+                getRotationMatrix(rotationAroundX, 1.0, 0.0, 0.0)
+        ));
+        gl.uniformMatrix4fv(yRotationMatrix, gl.FALSE, new Float32Array(
+                getRotationMatrix(rotationAroundY, 0.0, 1.0, 0.0)
+        ));
+
         // Display the objects.
         for (i = 0, maxi = objectsToDraw.length; i < maxi; i += 1) {
             drawObject(objectsToDraw[i]);
@@ -385,6 +391,15 @@
 
         // All done.
         gl.flush();
+    },
+
+    /*
+     * Performs rotation calculations.
+     */
+    rotateScene = function (event) {
+        rotationAroundX = xRotationStart - yDragStart + event.clientY;
+        rotationAroundY = yRotationStart - xDragStart + event.clientX;
+        drawScene();
     };
 
     // Because our canvas element will not change size (in this program),
@@ -402,51 +417,31 @@
         10
     )));
 
-    // Animation initialization/support.
-    previousTimestamp = null;
-    advanceScene = function (timestamp) {
-        // Check if the user has turned things off.
-        if (!animationActive) {
-            return;
-        }
+    // Set up our one light source and its colors.
+    gl.uniform4fv(lightPosition, [-10.0, 10.0, 100.0, 1.0]);
+    gl.uniform3fv(lightDiffuse, [1.0, 1.0, 1.0]);
+    gl.uniform3fv(lightSpecular, [1.0, 1.0, 1.0]);
 
-        // Initialize the timestamp.
-        if (!previousTimestamp) {
-            previousTimestamp = timestamp;
-            window.requestAnimationFrame(advanceScene);
-            return;
-        }
+    // Set up our texture sampler.
+    gl.uniform1i(gl.getUniformLocation(shaderProgram, "sampler"), 0);
 
-        // Check if it's time to advance.
-        var progress = timestamp - previousTimestamp;
-        if (progress < 30) {
-            // Do nothing if it's too soon.
-            window.requestAnimationFrame(advanceScene);
-            return;
-        }
-
-        // All clear.
-        currentRotation += 0.033 * progress;
-        drawScene();
-        if (currentRotation >= 360.0) {
-            currentRotation -= 360.0;
-        }
-
-        // Request the next frame.
-        previousTimestamp = timestamp;
-        window.requestAnimationFrame(advanceScene);
-    };
-
-    // Draw the initial scene.
-    drawScene();
-
-    // Set up the rotation toggle: clicking on the canvas does it.
-    $(canvas).click(function () {
-        animationActive = !animationActive;
-        if (animationActive) {
-            previousTimestamp = null;
-            window.requestAnimationFrame(advanceScene);
-        }
+    // Instead of animation, we do interaction: let the mouse control rotation.
+    $(canvas).mousedown(function (event) {
+        xDragStart = event.clientX;
+        yDragStart = event.clientY;
+        xRotationStart = rotationAroundX;
+        yRotationStart = rotationAroundY;
+        $(canvas).mousemove(rotateScene);
+    }).mouseup(function (event) {
+        $(canvas).unbind("mousemove");
     });
 
-}(document.getElementById("matrices-webgl")));
+    // Draw the initial scene. But we will wait until the texture is ready.
+    var drawWhenReady = setInterval(function () {
+            if (textureIsReady) {
+                drawScene();
+                clearInterval(drawWhenReady);
+            }
+        }, 10);
+
+}(document.getElementById("light-more-webgl")));

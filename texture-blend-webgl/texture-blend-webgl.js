@@ -18,9 +18,6 @@
         // Utility variable indicating whether some fatal has occurred.
         abort = false,
 
-        // The raw meshes from which we will derive our objects.
-        mesh = Shapes.icosahedron(),
-
         // Important state variables.  Yep, they are growing!
         modelViewMatrix,
         xRotationMatrix,
@@ -38,6 +35,14 @@
         lightPosition,
         lightDiffuse,
         lightSpecular,
+
+        // These variables pertain to texture mapping.
+        goldTexture,
+        waterTexture,
+        textureCoordinate,
+
+        // And the new addition: blending.
+        alpha,
 
         // An individual "draw object" function.
         drawObject,
@@ -176,21 +181,86 @@
     gl.clearColor(0.0, 0.0, 0.0, 0.0);
     gl.viewport(0, 0, canvas.width, canvas.height);
 
-    // Build the objects to display.
+    // Set up the texture object.
+    goldTexture = gl.createTexture();
+    waterTexture = gl.createTexture();
+
+    var readyTexture = 0;
+    var loadHandlerFor = function (texture, textureImage, textureId) {
+            return function () {
+                gl.activeTexture(textureId);
+                gl.bindTexture(gl.TEXTURE_2D, texture);
+                gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, textureImage);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_NEAREST);
+                gl.generateMipmap(gl.TEXTURE_2D);
+                readyTexture += 1;
+            };
+        };
+
+    var goldImage = new Image();
+    goldImage.onload = loadHandlerFor(goldTexture, goldImage, gl.TEXTURE0);
+    goldImage.src = "gold.jpg";
+
+    var waterImage = new Image();
+    waterImage.onload = loadHandlerFor(waterTexture, waterImage, gl.TEXTURE1);
+    waterImage.src = "water.jpg";
+
+    // Build the objects to display. We do some mesh manipulation here to get
+    // the desired effect.
+    var goldMesh = Shapes.icosahedron();
+    goldMesh.indices = goldMesh.indices.filter(function (triangle, index) { return index % 2; });
+
+    var waterMesh = Shapes.icosahedron();
+    waterMesh.indices = waterMesh.indices.filter(function (triangle, index) { return !(index % 2); });
+
     objectsToDraw = [
         {
-            vertices: Shapes.toRawTriangleArray(mesh),
+            vertices: Shapes.toRawTriangleArray(goldMesh),
 
-            // 12 triangles in all.
             color: { r: 1.0, g: 0.0, b: 0.0 },
-
-            // We make the specular reflection be white.
             specularColor: { r: 1.0, g: 1.0, b: 1.0 },
             shininess: 16,
 
             // Like colors, one normal per vertex.  This can be simplified
             // with helper functions, of course.
-            normals: Shapes.toNormalArray(mesh),
+            normals: Shapes.toNormalArray(goldMesh),
+
+            // One more array to associate with our vertices---texture coordinates!
+            // Here we generate them raw...some design thought may be needed in order
+            // to create/manage them in a more convenient way.
+            textureCoordinates: (function () {
+                var result = [];
+                for (var i = 0; i < 10; i += 1) {
+                    result.push(0.0, 0.0, 1.0, 0.0, 0.0, 1.0);
+                }
+                return result;
+            })(),
+
+            mode: gl.TRIANGLES
+        },
+
+        {
+            vertices: Shapes.toRawTriangleArray(waterMesh),
+
+            color: { r: 0.0, g: 0.0, b: 1.0 },
+            specularColor: { r: 1.0, g: 1.0, b: 1.0 },
+            shininess: 16,
+
+            // Like colors, one normal per vertex.  This can be simplified
+            // with helper functions, of course.
+            normals: Shapes.toNormalArray(waterMesh),
+
+            // One more array to associate with our vertices---texture coordinates!
+            // Here we generate them raw...some design thought may be needed in order
+            // to create/manage them in a more convenient way.
+            textureCoordinates: (function () {
+                var result = [];
+                for (var i = 0; i < 10; i += 1) {
+                    result.push(0.0, 0.0, 1.0, 0.0, 0.0, 1.0);
+                }
+                return result;
+            })(),
 
             mode: gl.TRIANGLES
         }
@@ -237,6 +307,10 @@
         // One more buffer: normals.
         objectsToDraw[i].normalBuffer = GLSLUtilities.initVertexBuffer(gl,
                 objectsToDraw[i].normals);
+ 
+        // And one more still: texture coordinates.
+        objectsToDraw[i].textureCoordinateBuffer = GLSLUtilities.initVertexBuffer(gl,
+                objectsToDraw[i].textureCoordinates);
     }
 
     // Initialize the shaders.
@@ -277,6 +351,8 @@
     gl.enableVertexAttribArray(vertexSpecularColor);
     normalVector = gl.getAttribLocation(shaderProgram, "normalVector");
     gl.enableVertexAttribArray(normalVector);
+    textureCoordinate = gl.getAttribLocation(shaderProgram, "textureCoordinate");
+    gl.enableVertexAttribArray(textureCoordinate);
 
     // Finally, we come to the typical setup for transformation matrices:
     // model-view and projection, managed separately.
@@ -291,6 +367,8 @@
     lightSpecular = gl.getUniformLocation(shaderProgram, "lightSpecular");
     shininess = gl.getUniformLocation(shaderProgram, "shininess");
 
+    alpha = gl.getUniformLocation(shaderProgram, "alpha");
+ 
     /*
      * Displays an individual object, including a transformation that now varies
      * for each object drawn.
@@ -321,6 +399,10 @@
         gl.bindBuffer(gl.ARRAY_BUFFER, object.normalBuffer);
         gl.vertexAttribPointer(normalVector, 3, gl.FLOAT, false, 0, 0);
 
+        // Set the texture varialbes.
+        gl.bindBuffer(gl.ARRAY_BUFFER, object.textureCoordinateBuffer);
+        gl.vertexAttribPointer(textureCoordinate, 2, gl.FLOAT, false, 0, 0);
+
         // Set the varying vertex coordinates.
         gl.bindBuffer(gl.ARRAY_BUFFER, object.buffer);
         gl.vertexAttribPointer(vertexPosition, 3, gl.FLOAT, false, 0, 0);
@@ -344,6 +426,21 @@
 
         // Display the objects.
         for (i = 0, maxi = objectsToDraw.length; i < maxi; i += 1) {
+            // We make the first half of our objects gold/opaque, and the next half
+            // water/translucent---translucent objects need to be drawn last because
+            // otherwise the blending will be incorrent.
+            var opaque = i < objectsToDraw.length / 2;
+            gl.uniform1i(gl.getUniformLocation(shaderProgram, "sampler"), opaque ? 0 : 1);
+            if (opaque) {
+                gl.enable(gl.DEPTH_TEST);
+                gl.disable(gl.BLEND);
+                gl.uniform1f(alpha, 1.0);
+            } else {
+                gl.disable(gl.DEPTH_TEST);
+                gl.enable(gl.BLEND);
+                gl.uniform1f(alpha, 0.5);
+            }
+
             drawObject(objectsToDraw[i]);
         }
 
@@ -376,7 +473,7 @@
     )));
 
     // Set up our one light source and its colors.
-    gl.uniform4fv(lightPosition, [500.0, 1000.0, 100.0, 1.0]);
+    gl.uniform4fv(lightPosition, [-10.0, 10.0, 100.0, 1.0]);
     gl.uniform3fv(lightDiffuse, [1.0, 1.0, 1.0]);
     gl.uniform3fv(lightSpecular, [1.0, 1.0, 1.0]);
 
@@ -391,7 +488,13 @@
         $(canvas).unbind("mousemove");
     });
 
-    // Draw the initial scene.
-    drawScene();
+    // Draw the initial scene. But we will wait until the texture is ready.
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
+    var drawWhenReady = setInterval(function () {
+            if (readyTexture === 2) {
+                drawScene();
+                clearInterval(drawWhenReady);
+            }
+        }, 10);
 
 }(document.getElementById("light-more-webgl")));
